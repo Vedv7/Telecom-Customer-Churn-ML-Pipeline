@@ -5,7 +5,7 @@ License: MIT · Python 3.11+ · CI
 End-to-end churn modeling: cleaning, correlation pruning, RFM + K-Means segmentation, SMOTE + undersampling, RFECV feature selection, model benchmarking, Optuna-tuned XGBoost, evaluation plots, SHAP explainability, serialized **inference bundle**, and an optional **FastAPI** service.
 
 **Short GitHub description (for “About”):**  
-Telecom churn classification — sklearn + XGBoost, imbalance handling, RFECV, Optuna, SHAP, training CLI and FastAPI scoring.
+End-to-end telecom churn prediction from structured customer data — RFM + K-Means, SMOTE, RFECV, Optuna-tuned XGBoost, SHAP; importable Python package with `churn-train` CLI, held-out evaluation, pytest + GitHub Actions CI, and FastAPI inference backed by a serialized end-to-end scoring model.
 
 ---
 
