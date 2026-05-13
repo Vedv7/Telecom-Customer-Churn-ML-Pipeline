@@ -12,6 +12,7 @@ Telecom churn classification — sklearn + XGBoost, imbalance handling, RFECV, O
 ## Table of contents
 
 - Executive summary
+- Quick diagrams
 - Repository layout
 - Local development
 - Training CLI
@@ -31,6 +32,31 @@ Telecom churn classification — sklearn + XGBoost, imbalance handling, RFECV, O
 | Serving       | FastAPI loads `ChurnEndToEndModel` from `artifacts/churn_bundle.joblib` (raw row → score). |
 | Leakage control | Correlation + KMeans fit on the **fit** split only; Optuna scores **validation**; **test** is held out for final metrics. |
 | CI without data | `compileall` + pytest (imports, correlation helper, end-to-end unit tests). |
+
+---
+
+## Quick diagrams
+
+### From data to scoring
+
+```mermaid
+flowchart LR
+  Data[Data file xlsx or csv] --> CLI[churn-train]
+  CLI --> Bundle[churn_bundle.joblib]
+  Bundle --> API[FastAPI POST predict]
+```
+
+### Training splits at a glance
+
+```mermaid
+flowchart TD
+  A[Load and clean] --> B[Split 80 percent fit vs 20 percent test]
+  B --> C[Learn correlation drops and RFM KMeans on fit only]
+  C --> D[Split fit into train and validation]
+  D --> E[Scale and balance train only]
+  E --> F[Optuna uses validation recall]
+  F --> G[Final model and one time test metrics]
+```
 
 ---
 
