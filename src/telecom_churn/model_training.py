@@ -1,10 +1,10 @@
 import pandas as pd
 import optuna
 import xgboost as xgb
-from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from sklearn import ensemble, linear_model, tree, model_selection
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, make_scorer
+from sklearn import ensemble, linear_model, model_selection, tree
+from sklearn.metrics import accuracy_score, f1_score, make_scorer, precision_score, recall_score
+from xgboost import XGBClassifier
 
 
 def benchmark_models(X, y) -> pd.DataFrame:
@@ -61,7 +61,7 @@ def benchmark_models(X, y) -> pd.DataFrame:
 
 
 def tune_xgboost_with_optuna(X_train, y_train, X_valid, y_valid, n_trials: int = 100):
-    """Tune XGBoost hyperparameters using Optuna, optimizing recall."""
+    """Tune XGBoost hyperparameters using Optuna (native booster), optimizing recall on a validation set."""
     dtrain = xgb.DMatrix(X_train, label=y_train)
     dvalid = xgb.DMatrix(X_valid, label=y_valid)
 
@@ -87,6 +87,18 @@ def tune_xgboost_with_optuna(X_train, y_train, X_valid, y_valid, n_trials: int =
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials)
     return study.best_trial.params, study.best_trial.value
+
+
+def optuna_params_to_sklearn_xgb(native_params: dict) -> dict:
+    """Map Optuna/native xgb.train param names to sklearn XGBClassifier kwargs."""
+    return {
+        "reg_lambda": native_params["lambda"],
+        "reg_alpha": native_params["alpha"],
+        "max_depth": native_params["max_depth"],
+        "learning_rate": native_params["eta"],
+        "gamma": native_params["gamma"],
+        "grow_policy": native_params["grow_policy"],
+    }
 
 
 def train_xgboost(X_train, y_train, params=None):

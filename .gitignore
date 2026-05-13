@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.Python
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Local data and generated artifacts
+data/*.xlsx
+data/*.xls
+data/*.csv
+!data/README.md
+!data/.gitkeep
+
+artifacts/
+images/
+model_benchmark.csv
+
+# Reference clone (local only)
+_ref_flight/

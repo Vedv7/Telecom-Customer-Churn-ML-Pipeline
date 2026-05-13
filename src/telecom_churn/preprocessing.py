@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 
 def reduce_mem_usage(df: pd.DataFrame) -> pd.DataFrame:
@@ -54,19 +54,75 @@ def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def fit_correlated_columns_to_drop(
+    df: pd.DataFrame,
+    target_col: str = "churn",
+    threshold: float = 0.85,
+) -> list[str]:
+    """Learn which numeric columns to drop from **training data only** (avoids test leakage)."""
+    numeric_df = df.select_dtypes(include=[np.number]).copy()
+    if numeric_df.shape[1] < 2:
+        return []
+    corr_matrix = numeric_df.corr().abs()
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    to_drop = [column for column in upper.columns if any(upper[column] >= threshold)]
+    return [col for col in to_drop if col != target_col]
+
+
+def apply_correlation_drop(df: pd.DataFrame, columns_to_drop: list[str]) -> pd.DataFrame:
+    """Apply a fixed list of columns learned by :func:`fit_correlated_columns_to_drop`."""
+    return df.drop(columns=[c for c in columns_to_drop if c in df.columns], errors="ignore")
+
+
 def remove_highly_correlated_features(
     df: pd.DataFrame,
     target_col: str = "churn",
     threshold: float = 0.85,
 ) -> pd.DataFrame:
-    """Remove highly correlated numeric features while preserving target column."""
-    numeric_df = df.select_dtypes(include=[np.number]).copy()
-    corr_matrix = numeric_df.corr().abs()
-    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    """Remove highly correlated numeric features while preserving target column (fit + apply on same frame)."""
+    cols = fit_correlated_columns_to_drop(df, target_col=target_col, threshold=threshold)
+    return apply_correlation_drop(df, cols)
 
-    to_drop = [column for column in upper.columns if any(upper[column] >= threshold)]
-    to_drop = [col for col in to_drop if col != target_col]
-    return df.drop(columns=to_drop, errors="ignore")
+
+def encode_churn_target(y: pd.Series) -> pd.Series:
+    """Map common string labels to 0/1 for modeling."""
+    if y.dtype == object or str(y.dtype) == "category":
+        return y.map({"No": 0, "Yes": 1, "no": 0, "yes": 1}).fillna(y)
+    return y
+
+
+def scale_and_balance_train_only(
+    X_train: pd.DataFrame,
+    y_train,
+    X_val: pd.DataFrame,
+    X_test: pd.DataFrame,
+    random_state: int = 23,
+):
+    """Fit scaler on train only; SMOTE + undersample train; transform val/test with the same scaler."""
+    scaler = StandardScaler()
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train),
+        columns=X_train.columns,
+        index=X_train.index,
+    )
+    X_val_scaled = pd.DataFrame(
+        scaler.transform(X_val),
+        columns=X_val.columns,
+        index=X_val.index,
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test),
+        columns=X_test.columns,
+        index=X_test.index,
+    )
+
+    smote = SMOTE(sampling_strategy=0.6, random_state=random_state)
+    X_smote, y_smote = smote.fit_resample(X_train_scaled, y_train)
+
+    under = RandomUnderSampler(random_state=random_state)
+    X_balanced, y_balanced = under.fit_resample(X_smote, y_smote)
+
+    return X_balanced, y_balanced, X_val_scaled, X_test_scaled, scaler
 
 
 def prepare_train_test_data(
@@ -81,9 +137,7 @@ def prepare_train_test_data(
 
     X = df.drop(columns=[target_col])
     y = df[target_col]
-
-    if y.dtype == object or str(y.dtype) == "category":
-        y = y.map({"No": 0, "Yes": 1, "no": 0, "yes": 1}).fillna(y)
+    y = encode_churn_target(y)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,

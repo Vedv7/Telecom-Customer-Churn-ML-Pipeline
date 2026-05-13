@@ -1,134 +1,168 @@
 # Telecom Customer Churn ML Pipeline
 
-An end-to-end machine learning project for predicting telecom customer churn and identifying high-risk customer segments using supervised learning, RFM analysis, clustering, feature selection, hyperparameter tuning, and model explainability.
+License: MIT · Python 3.11+ · CI
 
-## Project Overview
+End-to-end churn modeling: cleaning, correlation pruning, RFM + K-Means segmentation, SMOTE + undersampling, RFECV feature selection, model benchmarking, Optuna-tuned XGBoost, evaluation plots, SHAP explainability, serialized **inference bundle**, and an optional **FastAPI** service.
 
-Customer churn is a major business problem for subscription and telecom companies. This project analyzes customer behavior, usage patterns, spending activity, reload behavior, and inactivity signals to predict whether a customer is likely to churn.
+**Short GitHub description (for “About”):**  
+Telecom churn classification — sklearn + XGBoost, imbalance handling, RFECV, Optuna, SHAP, training CLI and FastAPI scoring.
 
-The pipeline includes:
+---
 
-- Exploratory data analysis
-- Memory optimization
-- Correlation-based feature reduction
-- RFM customer segmentation
-- K-Means clustering
-- Class imbalance handling with SMOTE and random undersampling
-- RFECV feature selection
-- Model benchmarking across multiple classifiers
-- XGBoost hyperparameter tuning with Optuna
-- Model evaluation using recall, precision, F1-score, ROC-AUC, and confusion matrix
-- SHAP-based model explainability
+## Table of contents
 
-## Tech Stack
+- Executive summary
+- Repository layout
+- Local development
+- Training CLI
+- Inference API
+- Reproducibility and CI
+- Modeling workflow (high level)
+- Roadmap
 
-- Python
-- Pandas, NumPy
-- Scikit-learn
-- XGBoost
-- LightGBM
-- Optuna
-- SHAP
-- imbalanced-learn
-- Matplotlib, Seaborn
+---
 
-## Repository Structure
+## Executive summary
 
-```bash
-Telecom-Customer-Churn-ML-Pipeline/
-├── data/
-│   └── README.md
-├── images/
-├── src/
-│   ├── preprocessing.py
-│   ├── segmentation.py
-│   ├── feature_selection.py
-│   ├── model_training.py
-│   ├── evaluation.py
-│   └── explainability.py
-├── main.py
+| Design goal   | How it is addressed |
+| ------------- | ------------------- |
+| Traceability  | `metrics.json` + `model_benchmark.csv` under `artifacts/` after each train. |
+| Packaging     | Installable `telecom_churn` package under `src/`, console script `churn-train`. |
+| Serving       | FastAPI loads `ChurnEndToEndModel` from `artifacts/churn_bundle.joblib` (raw row → score). |
+| Leakage control | Correlation + KMeans fit on the **fit** split only; Optuna scores **validation**; **test** is held out for final metrics. |
+| CI without data | `compileall` + pytest (imports, correlation helper, end-to-end unit tests). |
+
+---
+
+## Repository layout
+
+```
+.
+├── data/                     # Place mobile-churn-data.xlsx here (gitignored)
+├── src/telecom_churn/        # Library: preprocessing, segmentation, train, end_to_end model
+├── api/main.py               # FastAPI inference (optional extra)
+├── artifacts/                # Created by training (gitignored)
+├── images/                   # Plots from training (gitignored)
+├── tests/
+├── customer_churn_analysis.ipynb
+├── main.py                   # Thin wrapper → telecom_churn.cli:main
+├── pyproject.toml
 ├── requirements.txt
-├── .gitignore
-└── README.md
+├── LICENSE
+├── README.md
+└── .github/workflows/ci.yml
 ```
 
-## How to Run
+---
 
-Install dependencies:
+## Local development
 
-```bash
-pip install -r requirements.txt
+```powershell
+git clone https://github.com/Vedv7/Telecom-Customer-Churn-ML-Pipeline.git
+cd Telecom-Customer-Churn-ML-Pipeline
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -e ".[dev,api]"
 ```
 
-Run the pipeline:
+Copy your churn workbook to `data/mobile-churn-data.xlsx` (or pass `--data`).
 
-```bash
+On Linux or macOS, use `source .venv/bin/activate`.
+
+---
+
+## Training CLI
+
+After editable install:
+
+```powershell
+churn-train --data data/mobile-churn-data.xlsx --trials 100
+```
+
+Or, without installing the `churn-train` script on your PATH:
+
+```powershell
+python -m telecom_churn --data data/mobile-churn-data.xlsx --trials 100
+```
+
+Legacy entrypoint:
+
+```powershell
 python main.py --data data/mobile-churn-data.xlsx --trials 100
 ```
 
-## Model Approach
+Outputs (default `--out artifacts`):
 
-### 1. Data Cleaning
+- `artifacts/churn_bundle.joblib` — **v2** bundle: `ChurnEndToEndModel` (clean → correlation → RFM cluster → scale → XGBoost) for one-shot inference
+- `artifacts/metrics.json` — split policy, `expected_input_columns`, selected features, validation recall from tuning
+- `artifacts/model_benchmark.csv` — cross-validated benchmark table
+- `images/` — confusion matrix, ROC/PR curves, SHAP plots (unless `--skip-shap`)
 
-The project removes non-predictive identifiers, optimizes memory usage, checks null values, and reduces highly correlated features.
+Legacy **v1** bundles (model + scaler + column lists only) are still supported by `predict_row` if you load an older artifact.
 
-### 2. Customer Segmentation
+---
 
-RFM features are built from reload behavior:
+## Inference API
 
-- Recency: reload inactivity days
-- Frequency: reload count
-- Monetary value: reload amount
+Train first so `artifacts/churn_bundle.joblib` exists. Then:
 
-K-Means clustering is used to segment customers into behavioral groups.
+```powershell
+$env:CHURN_BUNDLE_PATH = "artifacts/churn_bundle.joblib"
+uvicorn api.main:app --reload
+```
 
-### 3. Imbalanced Classification
+- `GET /health` — bundle load status and `bundle_version` (2 = end-to-end)  
+- `GET /schema` — `expected_input_columns` for v2 bundles (legacy v1 returns 400 with guidance)  
+- `POST /predict` — JSON `{"features": { ... }}` using **spreadsheet-like** column names for one row (same schema as training before cleaning). The server runs the same cleaning, correlation pruning, and clustering as training, then scales and scores. Optional `churn` is ignored. If the row maps to the configured low-value RFM cluster, the response is `{"eligible": false, "reason": "low_value_segment", ...}` instead of a score.
 
-Because churn data is usually imbalanced, the training set is balanced using:
+For offline inspection, see `artifacts/metrics.json` → `expected_input_columns`.
 
-- SMOTE oversampling
-- Random undersampling
+---
 
-### 4. Feature Selection
+## Reproducibility and CI
 
-RFECV with Random Forest is used to select the most predictive features based on recall.
+GitHub Actions (`.github/workflows/ci.yml`) installs `pip install -e ".[dev,api]"` plus `requirements.txt`, runs `python -m compileall` on `src`, `tests`, and `api`, and runs `pytest`. **Full training is not executed in CI** because the Excel file is not stored in the repository.
 
-### 5. Model Training
+---
 
-The project benchmarks multiple models including:
+## Modeling workflow (high level)
 
-- Logistic Regression
-- Decision Tree
-- Random Forest
-- Extra Trees
-- Gradient Boosting
-- LightGBM
-- XGBoost
+1. Load CSV/XLSX → clean identifiers, memory downcast.  
+2. **Outer split** (e.g. 80/20 stratified): fit split vs held-out **test**.  
+3. Learn correlation drops on the **fit** split only; apply to test.  
+4. Fit RFM scaler + K-Means on the **fit** split; assign `cluster` to both; drop low-value segment on each side.  
+5. **Inner split** of the fit portion → **train** vs **validation** (stratified).  
+6. `StandardScaler` fit on train only → SMOTE + undersample **train**; transform val/test with that scaler.  
+7. RFECV (Random Forest, recall) on balanced train; benchmark models.  
+8. Optuna tunes XGBoost on **validation** recall (test is not used for tuning).  
+9. Final `XGBClassifier` on balanced train; evaluate once on **test**; SHAP; persist `ChurnEndToEndModel` + metrics.
 
-XGBoost is used as the final model after benchmarking and hyperparameter tuning.
+---
 
-### 6. Explainability
+## Roadmap
 
-SHAP is used to interpret feature influence globally and locally, helping explain why customers are predicted to churn.
+| Priority | Item |
+| -------- | ---- |
+| P1       | Pin a `requirements-lock.txt` after a clean full-environment train |
+| P1       | Refactor `ChurnEndToEndModel` into sklearn `Pipeline` steps where row-safe |
+| P2       | MLflow experiment tracking |
+| P2       | Streamlit or batch scoring CLI |
+| P3       | Drift detection for production monitoring |
 
-## Business Impact
+---
 
-This project helps telecom teams:
+## License
 
-- Identify customers at high risk of churn
-- Understand churn drivers
-- Segment users by customer value
-- Prioritize retention campaigns
-- Explain model decisions using SHAP
+This project is licensed under the MIT License — see [LICENSE](LICENSE).
 
-## Key Result
+---
 
-The original notebook concluded that ensemble models, especially XGBoost, performed best for churn prediction, achieving approximately 90% accuracy while improving recall for churners.
+## Author
 
-## Future Improvements
+**Veda Swaroop** — applied ML, churn analytics, and production-oriented tooling.
 
-- Add MLflow experiment tracking
-- Deploy model with FastAPI
-- Add Streamlit dashboard
-- Add automated retraining pipeline
-- Add drift detection for production monitoring
+---
+
+### Related layout
+
+This repository mirrors the structure of the domestic flight fare project ([Predicting-flight-rates-through-advanced-regrression](https://github.com/Vedv7/Predicting-flight-rates-through-advanced-regrression)): `pyproject.toml`, `src/<package>`, CLI entry point, `tests/`, `api/`, CI workflow, and MIT license.

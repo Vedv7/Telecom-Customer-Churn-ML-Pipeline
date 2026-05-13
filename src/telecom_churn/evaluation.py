@@ -1,13 +1,13 @@
 import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
+    auc,
+    average_precision_score,
     classification_report,
     confusion_matrix,
     ConfusionMatrixDisplay,
-    roc_curve,
-    auc,
     precision_recall_curve,
-    average_precision_score,
+    roc_curve,
 )
 
 

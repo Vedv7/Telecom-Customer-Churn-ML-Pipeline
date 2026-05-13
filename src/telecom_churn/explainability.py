@@ -1,6 +1,6 @@
 import os
-import shap
 import matplotlib.pyplot as plt
+import shap
 
 
 def save_shap_summary(model, X, output_path="images/shap_summary.png"):
